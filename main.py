@@ -1,14 +1,15 @@
 import os
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from openai import OpenAI
 
-# Ma'lumotlarni faqat Railway muhitidan (Environment Variables) olamiz
-# Agar Railway'da kiritilmagan bo'lsa, kod ishga tushmasdan xatolik beradi (bu xavfsizlik uchun muhim)
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
+SESSION_STRING = os.environ["SESSION_STRING"]  # Mana shu qator qo'shildi
 
-client = TelegramClient('session_name', API_ID, API_HASH)
+# StringSession orqali ulanamiz (endi raqam so'ramaydi)
+client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 groq_client = OpenAI(
     base_url="https://api.groq.com/openai/v1",
@@ -16,7 +17,6 @@ groq_client = OpenAI(
 )
 
 bot_active = True
-welcomed_users = set()
 
 @client.on(events.NewMessage(pattern='/stop', outgoing=True))
 async def stop_bot(event):
@@ -50,17 +50,23 @@ async def handler(event):
             return
 
     incoming_message = event.raw_text
-    chat_id = event.chat_id
+    print(f"Kelgan xabar: {incoming_message}")
 
     try:
-        if chat_id not in welcomed_users:
+        has_our_message = False
+        async for msg in client.iter_messages(event.chat_id, limit=15):
+            if msg.out:
+                has_our_message = True
+                break
+
+        if not has_our_message:
             welcome_text = (
                 "Hozirda **Soibnazarov Ro'zimurod** bandlar, lekin **tez orada yana aloqaga chiqadilar**.\n"
                 "🤖 Ungacha ularning o'rniga men — sun'iy intellekt (**AI**) yordamchisi javob beryapman.\n\n"
                 "💬 Biz bilan istalgan mavzuda bemalol suhbatlashishingiz va savollaringizni berishingiz mumkin. Sizga qanday yordam bera olaman?"
             )
             await event.reply(welcome_text)
-            welcomed_users.add(chat_id)
+            print("Bandlik matni yuborildi.")
             return
 
         system_prompt = (
@@ -80,6 +86,7 @@ async def handler(event):
         
         ai_reply = response.choices[0].message.content
         await event.reply(ai_reply)
+        print(f"Yuborilgan javob: {ai_reply}")
         
     except Exception as e:
         print(f"Xatolik yuz berdi: {e}")
