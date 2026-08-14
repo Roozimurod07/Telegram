@@ -1,4 +1,5 @@
 import os
+import time
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from openai import OpenAI
@@ -6,9 +7,8 @@ from openai import OpenAI
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
-SESSION_STRING = os.environ["SESSION_STRING"]  # Mana shu qator qo'shildi
+SESSION_STRING = os.environ["SESSION_STRING"]
 
-# StringSession orqali ulanamiz (endi raqam so'ramaydi)
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 groq_client = OpenAI(
@@ -18,17 +18,21 @@ groq_client = OpenAI(
 
 bot_active = True
 
+# Kimga qachon bandlik xabari yuborilganini vaqt bilan birga saqlash uchun lug'at (Dictionary)
+# Format: {chat_id: oxirgi_yuborilgan_vaqt_sekundda}
+welcomed_chats = {}
+
 @client.on(events.NewMessage(pattern='/stop', outgoing=True))
 async def stop_bot(event):
     global bot_active
     bot_active = False
-    await event.edit("🔴 **AI yordamchi vaqtincha o'chirildi!** Endi xabarlarga javob bermaydi.")
+    await event.edit("🔴 **AI yordamchi vaqtincha o'chirildi!**")
 
 @client.on(events.NewMessage(pattern='/start_bot', outgoing=True))
 async def start_bot(event):
     global bot_active
     bot_active = True
-    await event.edit("🟢 **AI yordamchi qaytadan yoqildi!** Xabarlarga javob berishni boshladi.")
+    await event.edit("🟢 **AI yordamchi qaytadan yoqildi!**")
 
 @client.on(events.NewMessage(incoming=True))
 async def handler(event):
@@ -44,31 +48,44 @@ async def handler(event):
     if sender and sender.bot:
         return
 
+    # Agar oxirgi xabarni o'zingiz yozgan bo'lsangiz, bot aralashmaydi
     messages_iter = client.iter_messages(event.chat_id, limit=1)
     async for last_msg in messages_iter:
         if last_msg.out:
             return
 
     incoming_message = event.raw_text
-    print(f"Kelgan xabar: {incoming_message}")
+    chat_id = event.chat_id
+    current_time = time.time() # Hozirgi vaqt sekundlarda
+
+    print(f"Kelgan xabar: {incoming_message} (Chat ID: {chat_id})")
 
     try:
-        has_our_message = False
-        async for msg in client.iter_messages(event.chat_id, limit=15):
-            if msg.out:
-                has_our_message = True
-                break
+        # 1 kundan qancha sekund o'tishini hisoblaymiz (24 soat * 60 minut * 60 sekund = 86400 sekund)
+        ONE_DAY_SECONDS = 24 * 60 * 60
+        
+        # Bu odamga oldin bandlik xabari yuborilganmi va 24 soat o'tganmi?
+        needs_welcome = False
+        
+        if chat_id not in welcomed_chats:
+            needs_welcome = True
+        else:
+            # Agar oxirgi yuborilgan vaqtdan 24 soat (1 kun) o'tgan bo'lsa, yana bandlik xabarini yuboramiz
+            if current_time - welcomed_chats[chat_id] > ONE_DAY_SECONDS:
+                needs_welcome = True
 
-        if not has_our_message:
+        if needs_welcome:
             welcome_text = (
                 "Hozirda **Soibnazarov Ro'zimurod** bandlar, lekin **tez orada yana aloqaga chiqadilar**.\n"
                 "🤖 Ungacha ularning o'rniga men — sun'iy intellekt (**AI**) yordamchisi javob beryapman.\n\n"
                 "💬 Biz bilan istalgan mavzuda bemalol suhbatlashishingiz va savollaringizni berishingiz mumkin. Sizga qanday yordam bera olaman?"
             )
             await event.reply(welcome_text)
-            print("Bandlik matni yuborildi.")
+            welcomed_chats[chat_id] = current_time # Hozirgi vaqtni saqlab qo'yamiz
+            print("Bandlik matni yuborildi (1 kunlik muddat yangilandi).")
             return
 
+        # Agar 1 kun o'tmagan bo'lsa, AI orqali javob beramiz
         system_prompt = (
             "Siz Soibnazarov Ro'zimurodning sun'iy intellekt (AI) yordamchisiz. "
             "O'zbek tilida imlo xatolarisiz, savodli va ravon yozing. "
@@ -86,14 +103,14 @@ async def handler(event):
         
         ai_reply = response.choices[0].message.content
         await event.reply(ai_reply)
-        print(f"Yuborilgan javob: {ai_reply}")
+        print(f"AI javobi yuborildi: {ai_reply}")
         
     except Exception as e:
         print(f"Xatolik yuz berdi: {e}")
         await event.reply("Hozirda Soibnazarov Ro'zimurod bandlar, lekin tez orada yana aloqaga chiqadilar. Men ularning AI yordamchisiman! 🤖")
 
 def main():
-    print("AI yordamchi ishga tushdi...")
+    print("AI yordamchi 1 kunlik xotira bilan ishga tushdi...")
     client.start()
     client.run_until_disconnected()
 
