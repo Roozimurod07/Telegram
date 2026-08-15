@@ -20,17 +20,27 @@ groq_client = OpenAI(
 bot_active = True
 welcomed_chats = {}
 
+# Har bir chat uchun xotirani saqlab turuvchi lug'at (chat_id: messages_list)
+chat_histories = {}
+
 @client.on(events.NewMessage(pattern='/stop', outgoing=True))
 async def stop_bot(event):
     global bot_active
     bot_active = False
-    await event.edit("🔴 **AI yordamchi vaqtincha o'chirildi!**")
+    await event.edit("🛠 **AI yordamchi vaqtincha o'chirildi!**")
 
 @client.on(events.NewMessage(pattern='/start_bot', outgoing=True))
 async def start_bot(event):
     global bot_active
     bot_active = True
-    await event.edit("🟢 **AI yordamchi qaytadan yoqildi!**")
+    await event.edit("🚀 **AI yordamchi qaytadan yoqildi!**")
+
+@client.on(events.NewMessage(pattern='/clear', outgoing=True))
+async def clear_memory(event):
+    chat_id = event.chat_id
+    if chat_id in chat_histories:
+        del chat_histories[chat_id]
+    await event.edit("🗑 **Ushbu chat uchun xotira tozalandi!**")
 
 @client.on(events.NewMessage(incoming=True))
 async def handler(event):
@@ -70,9 +80,9 @@ async def handler(event):
     current_time = time.time()
 
     try:
-        # --- 1. OVOZLI XABARNI MATNGA O'GIRISH ---
+        # --- 1. OVOZLI XABARni MATNga O'GIRISH ---
         if event.voice or event.audio:
-            await event.reply("🎤 *Ovozli xabar qabul qilindi, tinglab matnga o'giryapman...*")
+            await event.reply("🎧 *Ovozli xabar qabul qilindi, tinglab matnga o'giryapman...*")
             file_path = await event.download_media(file="temp_audio.ogg")
             
             with open(file_path, "rb") as audio_file:
@@ -84,11 +94,8 @@ async def handler(event):
             os.remove(file_path) # Faylni o'chirib tashlaymiz
 
         # --- 2. RASMLAR BILAN ISHLASH ---
-        image_url = None
         if event.photo:
             file_path = await event.download_media(file="temp_image.jpg")
-            # Groq hozircha Vision uchun internetga yuklangan rasm linkini yoki base64 ishlatadi. 
-            # Sodda usulda: rasm kelganini bildirib, AI'ga matn yuboramiz
             incoming_message = "[Foydalanuvchi rasm yubordi va shunday dedi: " + (incoming_message or "Rasm bo'yicha fikringizni bildiring") + "]"
             if os.path.exists(file_path):
                 os.remove(file_path)
@@ -114,22 +121,36 @@ async def handler(event):
                 welcomed_chats[chat_id] = current_time
                 return
 
-        # --- 4. AI JAVOB QAYTARISH ---
+        # --- 4. XOTIRANI BOSHQARISH VA AI JAVOB QAYTARISH ---
         system_prompt = (
             "Siz Soibnazarov Ro'zimurodning sun'iy intellekt (AI) yordamchisiz. "
             "O'zbek tilida imlo xatolarisiz, savodli va ravon yozing. "
             "Faqat har bir javobingizda qisqacha 'Men Ro'zimurodning AI yordamchisiman' deb eslatib o'ting va savoliga chiroyli emojilar bilan javob bering."
         )
 
+        # Agar bu chat uchun xotira hali mavjud bo'lmasa, uni yaratamiz va system promptni qo'shamiz
+        if chat_id not in chat_histories:
+            chat_histories[chat_id] = [
+                {"role": "system", "content": system_prompt}
+            ]
+
+        # Foydalanuvchi xabarini tarixga qo'shamiz
+        chat_histories[chat_id].append({"role": "user", "content": incoming_message or "Salom"})
+
+        # Xotira haddan tashqari uzun bo'lib ketmasligi uchun oxirgi 20 ta xabarni saqlab qolamiz (system prompt doim 1-o'rinda qoladi)
+        if len(chat_histories[chat_id]) > 21:
+            chat_histories[chat_id] = [chat_histories[chat_id][0]] + chat_histories[chat_id][-20:]
+
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": incoming_message or "Salom"}
-            ]
+            messages=chat_histories[chat_id]
         )
         
         ai_reply = response.choices[0].message.content
+        
+        # AI javobini ham tarixga qo'shamiz
+        chat_histories[chat_id].append({"role": "assistant", "content": ai_reply})
+
         await event.reply(ai_reply)
         
     except Exception as e:
